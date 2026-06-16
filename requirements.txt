@@ -1,0 +1,6 @@
+telethon>=1.34
+PyYAML>=6.0
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+python-socks>=2.4

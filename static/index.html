@@ -1,0 +1,662 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tg-mass-dm 控制台 - 暗黑极客版</title>
+<style>
+    /* 全局满屏基础设置 - 纯正暗黑科技风，拒绝空白 */
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background-color: #0b0f19; /* 极客深邃蓝黑 */
+        box-sizing: border-box;
+        color: #c9d1d9; /* 护眼淡灰 */
+        display: flex;
+        flex-direction: column;
+        overflow: hidden; /* 靠内部局部滚动，整体页面不抖动 */
+    }
+
+    /* 主撑满容器：流式布局拉满 */
+    .app-container {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        padding: 20px;
+        box-sizing: border-box;
+    }
+
+    /* 顶部标题栏 */
+    .app-header {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #1f293d;
+        padding-bottom: 12px;
+        margin-bottom: 15px;
+    }
+    .app-header h2 {
+        margin: 0;
+        color: #f0f6fc;
+        font-size: 20px;
+    }
+
+    /* 🧠 核心：高性能暗黑导航标签页 */
+    .nav-tabs {
+        display: flex;
+        gap: 8px;
+        border-bottom: 1px solid #212631;
+        padding-bottom: 8px;
+        margin-bottom: 15px;
+        flex-shrink: 0;
+    }
+    .tab-btn {
+        background: #161b26;
+        border: 1px solid #303642;
+        color: #8b949e;
+        padding: 10px 20px;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+        background: #212631;
+        color: #c9d1d9;
+    }
+    .tab-btn.active {
+        background: #1f6feb;
+        color: #ffffff;
+        border-color: #58a6ff;
+        box-shadow: 0 0 12px rgba(31, 111, 235, 0.4);
+    }
+
+    /* 模块视图切换控制区 */
+    .tab-content {
+        flex-grow: 1;
+        overflow-y: auto; /* 允许模块内部滚动，不再一拉到底 */
+        margin-bottom: 15px;
+        padding-right: 4px;
+    }
+    .tab-panel {
+        display: none; /* 默认隐藏 */
+        width: 100%;
+    }
+    .tab-panel.active {
+        display: block; /* 激活显示 */
+    }
+
+    /* 统一的暗黑高级卡片样式 */
+    .card {
+        background: #161b26; 
+        border: 1px solid #212631;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        padding: 20px;
+        box-sizing: border-box;
+        width: 100%;
+    }
+    .card h3 {
+        margin-top: 0;
+        margin-bottom: 16px;
+        color: #58a6ff; 
+        font-size: 16px;
+        border-left: 4px solid #1f6feb;
+        padding-left: 8px;
+    }
+
+    /* 基础表单组件横向全拉满，适配暗黑基调 */
+    textarea, input[type="text"], select {
+        width: 100% !important;
+        box-sizing: border-box;
+        border: 1px solid #303642;
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 14px;
+        color: #c9d1d9;
+        background-color: #0d1117; /* 输入框纯深黑 */
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    textarea:focus, input[type="text"]:focus, select:focus {
+        outline: none;
+        border-color: #58a6ff;
+        box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+    }
+    select option {
+        background-color: #161b26;
+        color: #c9d1d9;
+    }
+
+    /* 卡片内的文本域自动撑大 */
+    .card textarea {
+        height: 240px;
+        resize: vertical;
+        font-family: "Fira Code", monospace;
+    }
+
+    /* 按钮基础美化与动效 */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .btn-primary { background-color: #1f6feb; color: white; }
+    .btn-primary:hover { background-color: #388bfd; }
+    .btn-success { background-color: #238636; color: white; }
+    .btn-success:hover { background-color: #2ea043; }
+    .btn-danger { background-color: #da3633; color: white; }
+    .btn-danger:hover { background-color: #f85149; }
+    .btn-secondary { background-color: #303642; color: #c9d1d9; border: 1px solid #8b949e; }
+    .btn-secondary:hover { background-color: #212631; }
+
+    /* Session 列表项暗黑美化 */
+    .session-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px;
+        background: #0d1117;
+        border: 1px solid #303642;
+        border-radius: 6px;
+        margin-bottom: 8px;
+    }
+    .session-item.active {
+        background-color: #13231b; /* 墨绿暗黑 */
+        border-color: #2ea043;
+    }
+    .session-item .name { font-weight: bold; color: #f0f6fc; }
+    .session-item .meta { font-size: 12px; color: #8b949e; margin-top: 2px; }
+
+    /* 状态与徽章 */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    .badge.live { background-color: #13231b; color: #56d364; border: 1px solid #238636; }
+
+    /* 数据看板卡片调色 */
+    .stat-box {
+        background:#0d1117; 
+        padding:12px; 
+        border-radius:6px; 
+        text-align:center;
+        border: 1px solid #212631;
+    }
+
+    /* 底部固定控制台面板 */
+    .bottom-console {
+        flex-shrink: 0;
+        border-top: 2px solid #1f293d;
+        padding-top: 15px;
+    }
+
+    /* 经典日志容器暗黑美化 - 高保真极客风 */
+    #log-container {
+        background: #05070f;
+        color: #79c0ff; /* 淡蓝日志字 */
+        padding: 14px;
+        border-radius: 6px;
+        border: 1px solid #212631;
+        height: 180px; /* 固定高度，节约空间 */
+        overflow-y: auto;
+        font-family: "Fira Code", Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .log-line { margin-bottom: 4px; word-break: break-all; }
+    .log-time { color: #8b949e; margin-right: 8px; }
+    .log-tag { margin-right: 8px; font-weight: bold; }
+    .lv-success { color: #56d364; } /* 亮绿 */
+    .lv-fail { color: #f85149; }    /* 亮红 */
+    .lv-warn { color: #e3b341; }    /* 亮黄 */
+    
+    /* 全局异步 Toast 样式 */
+    #toast {
+        position: fixed; top: 20px; right: 20px; padding: 12px 24px; 
+        background: #1f6feb; color: #fff; border-radius: 6px; z-index: 9999;
+        opacity: 0; transition: opacity 0.3s; pointer-events: none;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    #toast.show { opacity: 1; }
+    #toast.err { background: #da3633; }
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<div class="app-container">
+    <div class="app-header">
+        <h2>🚀 Telegram 批量私信发送器 v4.0-web</h2>
+        <div>
+            <span id="sseBadge" class="badge" style="background:#303642; color:#c9d1d9;">SSE 未连接</span>
+            <span id="taskBadge" class="badge" style="background:#1f6feb; color:white;">空闲</span>
+        </div>
+    </div>
+
+    <div class="nav-tabs">
+        <button class="tab-btn active" onclick="switchTab('tab-config')">⚙️ 系统配置</button>
+        <button class="tab-btn" onclick="switchTab('tab-session')">🔑 账号凭证管理</button>
+        <button class="tab-btn" onclick="switchTab('tab-targets')">👥 目标用户池</button>
+        <button class="tab-btn" onclick="switchTab('tab-messages')">📝 消息文案池</button>
+    </div>
+
+    <div class="tab-content">
+        
+        <div id="tab-config" class="tab-panel active">
+            <div class="card">
+                <h3>⚙️ 全局核心配置</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px;">
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">API ID</label>
+                        <input type="text" id="cfgApiId" placeholder="例如: 123456">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">API HASH</label>
+                        <input type="text" id="cfgApiHash" placeholder="例如: abcdefg...">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">用户文件路径</label>
+                        <input type="text" id="cfgUsernames" placeholder="usernames.txt">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">文案文件路径</label>
+                        <input type="text" id="cfgMessages" placeholder="messages.txt">
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top:15px;">
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">最小延时(秒)</label>
+                        <input type="text" id="cfgDelayMin">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">最大延时(秒)</label>
+                        <input type="text" id="cfgDelayMax">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">每日发送上限(条)</label>
+                        <input type="text" id="cfgDailyLimit">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">尾部混淆随机字符串</label>
+                        <select id="cfgTailEnabled">
+                            <option value="true">开启</option>
+                            <option value="false">关闭</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">混淆样式</label>
+                        <select id="cfgTailStyle">
+                            <option value="dots">点缀样式 (dots)</option>
+                            <option value="ref">引用样式 (ref)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top:15px;">
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">定时自动启动 (可留空)</label>
+                        <input type="text" id="cfgStartTime" placeholder="例如: 08:30">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">时区设定</label>
+                        <input type="text" id="cfgTimezone" placeholder="Asia/Shanghai">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">过期处理行为</label>
+                        <select id="cfgWaitIfPast">
+                            <option value="true">等待次日时间点</option>
+                            <option value="false">立即忽略并执行</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:bold; color:#8b949e;">运行演练模式 (Dry Run)</label>
+                        <select id="cfgDryRun">
+                            <option value="true">开启 (只预览不发出)</option>
+                            <option value="false">关闭 (正常实际发送)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px; display: flex; gap: 10px;">
+                    <button id="btnSaveConfig" class="btn btn-primary">💾 保存当前系统配置</button>
+                    <button id="btnReloadConfig" class="btn btn-secondary">🔄 重载配置</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-session" class="tab-panel">
+            <div class="card">
+                <h3>🔑 Session 账号凭证配置</h3>
+                <div style="margin-bottom: 12px; padding: 10px; background-color: #1c2331; border-radius: 6px; font-size:14px; border: 1px solid #303642;">
+                    <strong style="color: #58a6ff;">活动 Session：</strong><span id="current-session-name" style="color: #f0f6fc; font-weight: bold;">加载中...</span>
+                    <span id="accountText" style="margin-left: 15px; color:#8b949e;"></span>
+                </div>
+                
+                <div id="sessionList" style="max-height: 240px; overflow-y: auto; border: 1px solid #303642; border-radius: 6px; padding: 10px; margin-bottom: 15px; background:#0d1117;">
+                    </div>
+
+                <div style="border-top: 1px dashed #303642; padding-top: 15px;">
+                    <div style="display: flex; gap: 10px; align-items: center; width: 100%;">
+                        <div style="flex-grow: 1;">
+                            <input type="text" id="session-phone" placeholder="在这里输入新账号手机号发起注册/登录 (如: +8613800000000)">
+                        </div>
+                        <button onclick="addSession()" class="btn btn-success" style="white-space: nowrap;">➕ 新增登录</button>
+                        <button onclick="deleteSelectedSession()" class="btn btn-danger" style="white-space: nowrap;">❌ 删除当前选中账号</button>
+                    </div>
+                </div>
+                <div style="margin-top:10px;">
+                    <button id="btnReloadSessions" class="btn btn-secondary" style="padding:6px 12px; font-size:12px;">🔄 刷新 Session 列表</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-targets" class="tab-panel">
+            <div class="card">
+                <h3>👥 目标用户池清单 (<span id="targetsBadge" style="color:#58a6ff;">0 个</span>)</h3>
+                <textarea id="targetsText" placeholder="@username1&#10;@username2..."></textarea>
+                <div style="margin-top: 12px; display: flex; gap: 10px;">
+                    <button id="btnSaveTargets" class="btn btn-primary">💾 保存目标用户池 (usernames.txt)</button>
+                    <button id="btnReloadTargets" class="btn btn-secondary">🔄 重载文件</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-messages" class="tab-panel">
+            <div class="card">
+                <h3>📝 消息群发文案池 (<span id="messagesBadge" style="color:#58a6ff;">0 条</span>)</h3>
+                <textarea id="messagesText" placeholder="这里是你的私信群发内容模板..."></textarea>
+                <div style="margin-top: 12px; display: flex; gap: 10px;">
+                    <button id="btnSaveMessages" class="btn btn-primary">💾 保存消息文案池 (messages.txt)</button>
+                    <button id="btnReloadMessages" class="btn btn-secondary">🔄 重载文件</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="bottom-console card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button id="btnStart" class="btn btn-success">🚀 启动正式发送</button>
+                <button id="btnDryRun" class="btn btn-primary">🔍 模拟演练(测试)</button>
+                <button id="btnPause" class="btn btn-secondary" style="background:#bf7e06; color:white;">⏸️ 暂停</button>
+                <button id="btnResume" class="btn btn-success">▶️ 恢复</button>
+                <button id="btnStop" class="btn btn-danger">⏹️ 强行停止</button>
+            </div>
+            
+            <div style="display: flex; gap: 12px;">
+                <div class="stat-box" style="padding: 4px 12px;"><span style="font-size:11px;color:#8b949e">成功: </span><span id="stSent" style="font-weight:bold;color:#56d364">0</span></div>
+                <div class="stat-box" style="padding: 4px 12px;"><span style="font-size:11px;color:#8b949e">失败: </span><span id="stFailed" style="font-weight:bold;color:#f85149">0</span></div>
+                <div class="stat-box" style="padding: 4px 12px;"><span style="font-size:11px;color:#8b949e">跳过: </span><span id="stSkipped" style="font-weight:bold;color:#8b949e">0</span></div>
+                <div class="stat-box" style="padding: 4px 12px;"><span style="font-size:11px;color:#8b949e">剔除: </span><span id="stRemoved" style="font-weight:bold;color:#ff7b72">0</span></div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; font-size:12px; color:#8b949e;">
+            <span id="limitMeta">加载中...</span>
+            <span id="progressText" style="font-weight:bold; color:#f0f6fc;">0 / 0</span>
+        </div>
+        <div style="width:100%; height:6px; background:#212631; border-radius:4px; overflow:hidden; margin-bottom: 12px;">
+            <div id="progressBar" style="width:0%; height:100%; background:#2ea043; transition: width 0.3s;"></div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size: 13px; font-weight: bold; color: #8b949e;">📊 实时执行日志流</span>
+            <button id="btnClearLog" class="btn btn-secondary" style="padding:2px 8px; font-size:11px;">🧹 清空屏幕</button>
+        </div>
+        <div id="log-container">
+            <div id="logBox"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let sse = null;
+const TASK_RUNNING = new Set(['running','paused','stopping']);
+
+/* ── 标签页无缝切换逻辑 ── */
+function switchTab(tabId) {
+    // 切换按钮高亮样式
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.currentTarget.classList.add('active');
+
+    // 切换面板显示状态
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+        panel.classList.remove('active');
+    });
+    $(tabId).classList.add('active');
+}
+
+function toast(msg, isErr=false){
+  const t=$('toast'); t.textContent=msg; t.classList.toggle('err',isErr); t.classList.add('show');
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2600);
+}
+
+async function api(method, url, body){
+  const opt={method, headers:{'Content-Type':'application/json'}};
+  if(body!==undefined) opt.body=JSON.stringify(body);
+  const r=await fetch(url, opt);
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){ toast(data.detail||('请求失败 '+r.status), true); throw new Error(data.detail||'err'); }
+  return data;
+}
+
+function renderStatus(s){
+  const t = s.task;
+  $('stSent').textContent=t.sent;
+  $('stFailed').textContent=t.failed;
+  $('stSkipped').textContent=t.skipped;
+  $('stRemoved').textContent=t.removed;
+  const pct = t.daily_limit>0 ? Math.min(100, (t.sent/t.daily_limit)*100) : 0;
+  $('progressBar').style.width=pct+'%';
+  $('progressText').textContent=t.sent+' / '+t.daily_limit;
+  $('limitMeta').textContent='上限：'+t.daily_limit+' ｜ 目标池：'+t.total+' ｜ 模式：'+(t.dry_run?'演练测试':'正式群发');
+  $('accountText').textContent = t.account ? ('(当前登录: '+t.account+')') : '';
+
+  const badge=$('taskBadge');
+  const stateMap={idle:'空闲',running:'运行中',paused:'已暂停',stopping:'停止中',finished:'已完成'};
+  badge.textContent=stateMap[t.state]||'未知';
+
+  const running=TASK_RUNNING.has(t.state);
+  $('btnStart').disabled=running;
+  $('btnDryRun').disabled=running;
+  $('btnPause').disabled = t.state!=='running';
+  $('btnResume').disabled = t.state!=='paused';
+  $('btnStop').disabled = !running;
+}
+
+async function pollStatus(){
+  try{ const s=await api('GET','/api/status'); renderStatus(s); }catch(e){}
+}
+setInterval(pollStatus, 1500);
+
+function connectSSE(){
+  if(sse) sse.close();
+  sse = new EventSource('/api/logs/stream');
+  sse.onopen = ()=>{ $('sseBadge').textContent='SSE 已连接'; $('sseBadge').style.background='#13231b'; $('sseBadge').style.color='#56d364'; };
+  sse.onmessage = (e)=>{
+    try{
+      const ev=JSON.parse(e.data);
+      appendLog(ev);
+      if(ev.category==='summary' || ev.category==='status') pollStatus();
+    }catch(err){}
+  };
+  sse.onerror = ()=>{ $('sseBadge').textContent='SSE 重连中…'; $('sseBadge').style.background='#2d1818'; $('sseBadge').style.color='#f85149'; setTimeout(connectSSE, 3000); };
+}
+
+function appendLog(ev){
+  const box=$('logBox');
+  const line=document.createElement('div');
+  line.className='log-line lv-'+ev.level+(ev.category==='summary'?' lv-summary':'');
+  const d=ev.ts ? new Date(ev.ts*1000) : new Date();
+  const time=d.toLocaleTimeString('zh-CN',{hour12:false});
+  const tagMap={info:'INFO',success:'成功',fail:'失败',warn:'警告',skip:'跳过',remove:'剔除',wait:'等待'};
+  line.innerHTML='<span class="log-time">'+time+'</span><span class="log-tag">['+(tagMap[ev.level]||ev.level)+']</span><span class="log-msg">'+escapeHtml(ev.message)+'</span>';
+  box.appendChild(line);
+  
+  const container = $('log-container');
+  container.scrollTop = container.scrollHeight;
+  while(box.children.length>1000) box.removeChild(box.firstChild);
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+$('btnStart').onclick=async()=>{ try{ await api('POST','/api/send/start',{dry_run:false,now:true}); toast('正式批量发送任务已启动！'); }catch(e){} };
+$('btnDryRun').onclick=async()=>{ try{ await api('POST','/api/send/start',{dry_run:true,now:true}); toast('演练测试模式已启动'); }catch(e){} };
+$('btnPause').onclick=async()=>{ try{ await api('POST','/api/send/pause'); toast('已提交暂停请求'); }catch(e){} };
+$('btnResume').onclick=async()=>{ try{ await api('POST','/api/send/resume'); toast('任务已继续运行'); }catch(e){} };
+$('btnStop').onclick=async()=>{ try{ await api('POST','/api/send/stop'); toast('已强行发出停止信号'); }catch(e){} };
+$('btnClearLog').onclick=()=>{ $('logBox').innerHTML=''; };
+
+async function loadConfig(){
+  try{
+    const c=await api('GET','/api/config');
+    $('cfgApiId').value=c.api_id||'';
+    $('cfgApiHash').value=c.api_hash||'';
+    $('cfgUsernames').value=c.usernames_file||'';
+    $('cfgMessages').value=c.messages_file||'';
+    $('cfgDelayMin').value=c.delay_min;
+    $('cfgDelayMax').value=c.delay_max;
+    $('cfgDailyLimit').value=c.daily_limit;
+    $('cfgTailStyle').value=c.tail_style;
+    $('cfgTailEnabled').value=String(c.tail_enabled);
+    $('cfgStartTime').value=c.start_time||'';
+    $('cfgTimezone').value=c.timezone;
+    $('cfgWaitIfPast').value=String(c.wait_if_past);
+    $('cfgDryRun').value=String(c.dry_run);
+  }catch(e){}
+}
+$('btnSaveConfig').onclick=async()=>{
+  try{
+    await api('PUT','/api/config',{
+      api_id:Number($('cfgApiId').value)||undefined,
+      api_hash:$('cfgApiHash').value||undefined,
+      usernames_file:$('cfgUsernames').value||undefined,
+      messages_file:$('cfgMessages').value||undefined,
+      delay_min:Number($('cfgDelayMin').value),
+      delay_max:Number($('cfgDelayMax').value),
+      daily_limit:Number($('cfgDailyLimit').value),
+      tail_style:$('cfgTailStyle').value,
+      tail_enabled:$('cfgTailEnabled').value==='true',
+      start_time:$('cfgStartTime').value,
+      timezone:$('cfgTimezone').value,
+      wait_if_past:$('cfgWaitIfPast').value==='true',
+      dry_run:$('cfgDryRun').value==='true',
+    });
+    toast('系统配置写入保存成功');
+  }catch(e){}
+};
+$('btnReloadConfig').onclick=loadConfig;
+
+async function loadTargets(){
+  try{ const d=await api('GET','/api/targets'); $('targetsText').value=d.raw; $('targetsBadge').textContent=d.count+' 个'; }catch(e){}
+}
+$('btnSaveTargets').onclick=async()=>{
+  try{ const d=await api('PUT','/api/targets',{text:$('targetsText').value}); $('targetsBadge').textContent=d.count+' 个'; $('targetsText').value=d.items.join('\n')+'\n'; toast('名单保存成功，去重后共计 '+d.count+' 个目标'); }catch(e){}
+};
+$('btnReloadTargets').onclick=loadTargets;
+
+async function loadMessages(){
+  try{ const d=await api('GET','/api/messages'); $('messagesText').value=d.raw; $('messagesBadge').textContent=d.count+' 条'; }catch(e){}
+}
+$('btnSaveMessages').onclick=async()=>{
+  try{ const d=await api('PUT','/api/messages',{text:$('messagesText').value}); $('messagesBadge').textContent=d.count+' 条'; toast('消息文案池保存成功，共计 '+d.count+' 条'); }catch(e){}
+};
+$('btnReloadMessages').onclick=loadMessages;
+
+let currentActiveSessionRelPath = "";
+
+async function loadSessions(){
+  try{
+    const d=await api('GET','/api/sessions');
+    $('current-session-name').textContent = d.current + ".session";
+    const box=$('sessionList'); box.innerHTML='';
+    if(!d.items.length){ box.innerHTML='<div style="color:#8b949e; font-size:13px; text-align:center; padding:10px;">未发现凭证，请使用下方组件登录添加或拖入 .session 文件到目录</div>'; return; }
+    
+    d.items.forEach(s=>{
+      const el=document.createElement('div');
+      el.className='session-item'+(s.current?' active':'');
+      el.style.cursor = 'pointer';
+      el.onclick = () => {
+         document.querySelectorAll('.session-item').forEach(i=>i.style.boxShadow='none');
+         el.style.boxShadow = '0 0 0 2px #58a6ff';
+         currentActiveSessionRelPath = s.rel_path;
+      };
+      
+      if(s.current) { currentActiveSessionRelPath = s.rel_path; }
+      el.innerHTML='<div><div class="name">👤 '+escapeHtml(s.name)+'</div><div class="meta">路径: '+escapeHtml(s.rel_path)+'.session</div></div>';
+      
+      if(!s.current){
+        const btn=document.createElement('button'); btn.className='btn btn-secondary'; btn.style.padding='4px 10px'; btn.style.fontSize='12px'; btn.textContent='切换为该账号';
+        btn.onclick=async(e)=>{ e.stopPropagation(); try{ await api('PUT','/api/sessions/active',{rel_path:s.rel_path}); toast('成功切换活动 Telegram 发送凭证！'); loadSessions(); }catch(err){} };
+        el.appendChild(btn);
+      } else {
+        const tag=document.createElement('span'); tag.className='badge live'; tag.textContent='正在激活使用'; el.appendChild(tag);
+      }
+      box.appendChild(el);
+    });
+  }catch(e){}
+}
+$('btnReloadSessions').onclick=loadSessions;
+
+async function addSession() {
+    const phoneInput = $('session-phone').value.trim();
+    if (!phoneInput) {
+        alert("请输入完整的国际格式手机号，例如: +8613800000000");
+        return;
+    }
+    try {
+        const data = await api('POST', '/api/sessions/login', { phone: phoneInput });
+        alert(data.message || "登录流已成功初始化！请立刻前往你的 Python 后端 CMD 终端黑窗口，根据提示输入 Telegram 官方下发的验证码进行接码登录。");
+        loadSessions();
+    } catch (error) {}
+}
+
+async function deleteSelectedSession() {
+    if (!currentActiveSessionRelPath) {
+        alert("请先在列表中点击选择你要删除的 Session 凭证。");
+        return;
+    }
+    if (!confirm(`安全警告：你确定要从磁盘上永久删除该凭证吗？\n目标：${currentActiveSessionRelPath}.session\n此操作不可恢复！`)) {
+        return;
+    }
+    try {
+        const data = await api('DELETE', '/api/sessions', { rel_path: currentActiveSessionRelPath });
+        toast(data.message || "删除成功");
+        loadSessions();
+    } catch (error) {}
+}
+
+loadConfig();
+loadTargets();
+loadMessages();
+loadSessions();
+connectSSE();
+</script>
+</body>
+</html>

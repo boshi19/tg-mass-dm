@@ -1,0 +1,14 @@
+﻿    def test_past_time_with_wait(self, monkeypatch):
+        """已过今日时间且 wait_if_past=true 时等待到明天"""
+        import datetime
+        from zoneinfo import ZoneInfo
+
+        schedule = ScheduleConfig(start_time="03:00", timezone="Asia/Shanghai", wait_if_past=True)
+
+        fake_now = datetime.datetime(2026, 6, 14, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        with patch("scheduler.datetime.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.timedelta = datetime.timedelta
+            with patch("scheduler.time.sleep") as mock_sleep:
+                wait_until_scheduled(schedule)
+                mock_sleep.assert_called_once()

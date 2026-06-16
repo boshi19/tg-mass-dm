@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build outputs
+build/
+dist/
+*.spec
+*.exe
+*.dll
+*.pyd
+*.zip
+
+# Runtime credentials and user data
+sessions/
+*.session
+*.session-journal
+config.yaml
+messages.txt
+usernames.txt
+crash.log
+
+# Local logs/temp files
+*.log
+_*.txt

@@ -1,0 +1,32 @@
+# Telegram batch DM WebUI example config
+
+api_id: 123456
+api_hash: "replace_with_your_api_hash"
+session_file: ../sessions/example_session
+usernames_file: usernames.txt
+messages_file: messages.txt
+
+schedule:
+  start_time: "08:30"
+  timezone: Asia/Shanghai
+  wait_if_past: false
+
+delay:
+  min: 90.0
+  max: 300.0
+
+daily_limit: 20
+
+random_tail:
+  enabled: true
+  style: dots
+
+dry_run: true
+
+# Optional proxy example:
+# proxy:
+#   type: socks5
+#   host: 127.0.0.1
+#   port: 7890
+#   username:
+#   password:
