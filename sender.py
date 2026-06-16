@@ -217,7 +217,7 @@ async def send_messages(
 
             except FloodWaitError as e:
                 wait_sec = e.seconds + random.randint(5, 15)
-                await _log(hooks, "warn", f"{tag} [限流] 需等待 {wait_sec} 秒 -> {username}")
+                await _log(hooks, "warn", f"{tag} [限流] 稍后自动重试 -> {username}")
                 # 分段等待以便响应停止
                 for _ in range(0, wait_sec, 5):
                     if await _stopped(hooks):

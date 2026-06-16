@@ -41,7 +41,7 @@ def wait_until_scheduled(schedule: ScheduleConfig) -> None:
             return
 
     wait_seconds = (target - now).total_seconds()
-    print(f"[定时] 定时启动: {target.strftime('%Y-%m-%d %H:%M %Z')}，等待 {wait_seconds:.0f} 秒...")
+    print(f"[定时] 定时启动: {target.strftime('%Y-%m-%d %H:%M %Z')}，进入等待...")
     time.sleep(wait_seconds)
     print("[定时] 到达预定时间，开始执行！")
 
@@ -60,18 +60,12 @@ def random_sleep(delay: DelayConfig) -> None:
     actual = max(1.0, wait + jitter)
 
     if actual > 120:
-        # 超过 2 分钟，每 60 秒打印一次倒计时
         total = int(actual)
-        print(f"  ... 等待 {total // 60} 分 {total % 60} 秒 ...")
         while total > 0:
             step = min(60, total)
             time.sleep(step)
             total -= step
-            if total > 0:
-                print(f"  ... 剩余等待 {total // 60} 分 {total % 60} 秒 ...")
-        print("  ... 等待完成，继续发送 ...")
     else:
-        print(f"  ... 等待 {actual:.0f} 秒 ...")
         time.sleep(actual)
 
 
@@ -96,13 +90,10 @@ async def async_sleep(delay: DelayConfig, hooks: dict | None = None) -> bool:
     jitter = wait * random.uniform(-0.15, 0.15)
     actual = max(1.0, wait + jitter)
 
-    on_log = hooks.get("on_log") if hooks else None
     should_stop = hooks.get("should_stop") if hooks else None
 
     total = int(actual)
     if total > 120:
-        if on_log:
-            await on_log("wait", f"等待 {total // 60} 分 {total % 60} 秒 ...")
         while total > 0:
             # 检查停止
             if should_stop and await should_stop():
@@ -110,13 +101,7 @@ async def async_sleep(delay: DelayConfig, hooks: dict | None = None) -> bool:
             step = min(10, total)  # 10 秒粒度切片，快速响应控制信号
             await asyncio.sleep(step)
             total -= step
-            if total > 0 and on_log:
-                await on_log("wait", f"剩余等待 {total // 60} 分 {total % 60} 秒 ...")
-        if on_log:
-            await on_log("info", "等待完成，继续发送")
     else:
-        if on_log:
-            await on_log("wait", f"等待 {actual:.0f} 秒 ...")
         remaining = actual
         while remaining > 0:
             if should_stop and await should_stop():
