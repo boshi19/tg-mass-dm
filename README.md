@@ -1,4 +1,12 @@
-# tg-mass-dm v2.1
+# tg-mass-dm v4.1-web
+
+## v4.1-web 更新特性
+
+- 增加 Telethon 关键网络调用超时，降低长时间运行后的假死风险。
+- 增加任务心跳字段：`last_heartbeat`、`last_action`、`current_target`、`waiting`。
+- 随机延时、定时等待、限流等待不再输出具体等待分钟/秒数日志。
+- WebUI 可通过 `/api/status` 判断任务是否仍在运行或等待中。
+
 
 基于 Telethon 个人账户 API 的 Telegram 批量私信发送器。
 

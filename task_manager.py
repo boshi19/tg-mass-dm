@@ -1,6 +1,7 @@
 ﻿# task_manager.py - 任务状态管理单例：控制启停/暂停、维护实时统计
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -29,11 +30,30 @@ class TaskStats:
     dry_run: bool = False
     account: str = ""        # 已登录账号 @username
     last_error: str = ""     # 最近一次致命错误（PeerFlood 等）
+    started_at: float = 0.0
+    last_heartbeat: float = 0.0
+    last_action: str = ""
+    current_target: str = ""
+    waiting: bool = False
 
     def progress(self) -> float:
         if self.daily_limit <= 0:
             return 0.0
         return round(self.sent / self.daily_limit, 4)
+
+    def touch(
+        self,
+        action: str | None = None,
+        current_target: str | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        self.last_heartbeat = time.time()
+        if action is not None:
+            self.last_action = action
+        if current_target is not None:
+            self.current_target = current_target
+        if waiting is not None:
+            self.waiting = waiting
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +69,11 @@ class TaskStats:
             "account": self.account,
             "progress": self.progress(),
             "last_error": self.last_error,
+            "started_at": self.started_at,
+            "last_heartbeat": self.last_heartbeat,
+            "last_action": self.last_action,
+            "current_target": self.current_target,
+            "waiting": self.waiting,
         }
 
 
@@ -74,9 +99,11 @@ class TaskManager:
 
     # ── hooks（供 sender 使用）────────────────
     async def hook_on_log(self, level: str, message: str, category: str = "log") -> None:
+        self.stats.touch(action=message)
         await bus.publish(level, message, category)
 
     async def hook_on_progress(self) -> None:
+        self.stats.touch(action=self._progress_text())
         await bus.publish("info", self._progress_text(), "progress")
 
     def _progress_text(self) -> str:
@@ -88,10 +115,19 @@ class TaskManager:
     async def hook_should_stop(self) -> bool:
         return self.stop_event.is_set()
 
+    async def hook_on_activity(
+        self,
+        action: str | None = None,
+        current_target: str | None = None,
+        waiting: bool | None = None,
+    ) -> None:
+        self.stats.touch(action=action, current_target=current_target, waiting=waiting)
+
     def hooks(self) -> dict:
         return {
             "on_log": self.hook_on_log,
             "on_progress": self.hook_on_progress,
+            "on_activity": self.hook_on_activity,
             "should_pause": self.hook_should_pause,
             "should_stop": self.hook_should_stop,
         }
@@ -102,7 +138,8 @@ class TaskManager:
         if self.is_running():
             return False
         # 重置状态
-        self.stats = TaskStats(state=TaskState.RUNNING)
+        now = time.time()
+        self.stats = TaskStats(state=TaskState.RUNNING, started_at=now, last_heartbeat=now, last_action="任务启动")
         self.pause_event.clear()
         self.stop_event.clear()
         bus.clear_history()
@@ -115,15 +152,18 @@ class TaskManager:
         try:
             await coro
         except asyncio.CancelledError:
+            self.stats.touch(action="任务被取消", waiting=False)
             await bus.publish("warn", "任务被取消", "status")
         except Exception as e:
             self.stats.last_error = str(e)
             self.stats.state = TaskState.FINISHED
+            self.stats.touch(action=f"任务异常终止：{e}", waiting=False)
             await bus.publish("fail", f"任务异常终止：{e}", "status")
             return
         finally:
             if self.stats.state != TaskState.FINISHED:
                 self.stats.state = TaskState.FINISHED
+            self.stats.touch(action="任务结束", waiting=False)
             self._task = None
             await bus.publish("info", f"任务结束，状态：{self.stats.state.value}", "status")
             await bus.publish("info", self._progress_text(), "summary")
@@ -133,6 +173,7 @@ class TaskManager:
             return False
         self.pause_event.set()
         self.stats.state = TaskState.PAUSED
+        self.stats.touch(action="已请求暂停", waiting=False)
         await bus.publish("warn", "已请求暂停（当前消息发送完成后生效）", "status")
         return True
 
@@ -141,6 +182,7 @@ class TaskManager:
             return False
         self.pause_event.clear()
         self.stats.state = TaskState.RUNNING
+        self.stats.touch(action="已恢复发送", waiting=False)
         await bus.publish("info", "已恢复发送", "status")
         return True
 
@@ -150,6 +192,7 @@ class TaskManager:
         self.stop_event.set()
         self.pause_event.clear()  # 解除暂停以便能检查到 stop
         self.stats.state = TaskState.STOPPING
+        self.stats.touch(action="已请求停止", waiting=False)
         await bus.publish("warn", "已请求停止（当前消息处理完成后安全退出）", "status")
         return True
 

@@ -1,4 +1,4 @@
-﻿# main.py - WebUI 启动入口 (v4.0-web)
+﻿# main.py - WebUI 启动入口 (v4.1-web)
 # 启动 FastAPI + uvicorn 服务，浏览器访问 http://127.0.0.1:8000
 
 import argparse
@@ -13,7 +13,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 55)
-    print("  tg-mass-dm WebUI v4.0-web")
+    print("  tg-mass-dm WebUI v4.1-web")
     print("=" * 55)
     print(f"  访问地址: http://{args.host}:{args.port}")
     print(f"  按 Ctrl+C 停止服务\n")
@@ -35,3 +35,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

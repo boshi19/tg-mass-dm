@@ -91,12 +91,19 @@ async def async_sleep(delay: DelayConfig, hooks: dict | None = None) -> bool:
     actual = max(1.0, wait + jitter)
 
     should_stop = hooks.get("should_stop") if hooks else None
+    on_activity = hooks.get("on_activity") if hooks else None
 
     total = int(actual)
+    if on_activity:
+        await on_activity("随机延时等待中", waiting=True)
     if total > 120:
         while total > 0:
             # 检查停止
+            if on_activity:
+                await on_activity("随机延时等待中", waiting=True)
             if should_stop and await should_stop():
+                if on_activity:
+                    await on_activity("等待被停止", waiting=False)
                 return False
             step = min(10, total)  # 10 秒粒度切片，快速响应控制信号
             await asyncio.sleep(step)
@@ -104,11 +111,17 @@ async def async_sleep(delay: DelayConfig, hooks: dict | None = None) -> bool:
     else:
         remaining = actual
         while remaining > 0:
+            if on_activity:
+                await on_activity("随机延时等待中", waiting=True)
             if should_stop and await should_stop():
+                if on_activity:
+                    await on_activity("等待被停止", waiting=False)
                 return False
             step = min(2.0, remaining)
             await asyncio.sleep(step)
             remaining -= step
+    if on_activity:
+        await on_activity("等待完成", waiting=False)
     return True
 
 
@@ -138,16 +151,22 @@ async def async_wait_until_scheduled(schedule: ScheduleConfig, hooks: dict | Non
         else:
             return True
 
-    on_log = hooks.get("on_log") if hooks else None
     should_stop = hooks.get("should_stop") if hooks else None
+    on_activity = hooks.get("on_activity") if hooks else None
 
-    if on_log:
-        await on_log("info", f"定时启动：{target.strftime('%Y-%m-%d %H:%M')}，进入等待")
+    if on_activity:
+        await on_activity("定时等待中", waiting=True)
 
     while True:
         now = datetime.datetime.now(tz)
         if now >= target:
+            if on_activity:
+                await on_activity("定时等待完成", waiting=False)
             return True
+        if on_activity:
+            await on_activity("定时等待中", waiting=True)
         if should_stop and await should_stop():
+            if on_activity:
+                await on_activity("定时等待被停止", waiting=False)
             return False
         await asyncio.sleep(5)

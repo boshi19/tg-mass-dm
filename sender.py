@@ -35,16 +35,20 @@ class SendResult:
 
 
 # hooks 约定：均为 async，由调用方（task_manager）实现
-Hooks = dict  # {"on_log", "on_progress", "should_pause", "should_stop"}
+Hooks = dict  # {"on_log", "on_progress", "on_activity", "should_pause", "should_stop"}
+CONNECT_TIMEOUT = 45
+AUTH_TIMEOUT = 20
+SEND_TIMEOUT = 45
+FLOOD_WAIT_STEP = 5
 
 
 async def safe_disconnect(client: TelegramClient) -> None:
     """安全断开 Telethon 连接，规避 set_update_state 属性的兼容错误"""
     try:
-        await client.disconnect()
-    except TypeError:
+        await asyncio.wait_for(client.disconnect(), timeout=10)
+    except (TypeError, asyncio.TimeoutError):
         try:
-            await client._disconnect()
+            await asyncio.wait_for(client._disconnect(), timeout=10)
         except Exception:
             pass
         try:
@@ -67,6 +71,16 @@ async def _stopped(hooks: Hooks | None) -> bool:
 
 async def _paused(hooks: Hooks | None) -> bool:
     return bool(hooks and hooks.get("should_pause") and await hooks["should_pause"]())
+
+
+async def _activity(
+    hooks: Hooks | None,
+    action: str | None = None,
+    current_target: str | None = None,
+    waiting: bool | None = None,
+) -> None:
+    if hooks and hooks.get("on_activity"):
+        await hooks["on_activity"](action, current_target, waiting)
 
 
 async def _build_proxy(proxy_cfg: dict | None):
@@ -119,12 +133,14 @@ async def send_messages(
         stats_ref.total = len(targets)
         stats_ref.daily_limit = daily_limit
         stats_ref.dry_run = dry_run or cfg.dry_run
+        stats_ref.touch(action="加载发送任务", waiting=False)
 
     if dry_run or cfg.dry_run:
         dry_run = True
         await _log(hooks, "info", "测试模式 (dry_run=true)，不会实际发送消息")
 
     await _log(hooks, "info", f"连接 Session：{cfg.session_path}")
+    await _activity(hooks, "连接 Telegram", waiting=False)
 
     # 构建代理
     proxy_params = await _build_proxy(cfg.proxy) if cfg.proxy else None
@@ -144,7 +160,7 @@ async def send_messages(
 
     try:
         try:
-            await client.connect()
+            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT)
         except (OSError, ConnectionError, Exception) as e:
             error_msg = str(e)
             raise RuntimeError(
@@ -156,13 +172,16 @@ async def send_messages(
                 f"  4. 如果没用代理，请确认当前网络能否直连 Telegram 服务器。"
             )
 
-        if not await client.is_user_authorized():
+        await _activity(hooks, "检查 Session 授权", waiting=False)
+        if not await asyncio.wait_for(client.is_user_authorized(), timeout=AUTH_TIMEOUT):
             raise RuntimeError("Session 未授权，请先在「Session」页面登录获取 session 文件")
 
-        me = await client.get_me()
+        await _activity(hooks, "读取账号信息", waiting=False)
+        me = await asyncio.wait_for(client.get_me(), timeout=AUTH_TIMEOUT)
         account = f"{me.first_name} (@{me.username or 'N/A'})"
         if stats_ref is not None:
             stats_ref.account = account
+            stats_ref.touch(action=f"已登录：{account}", waiting=False)
         await _log(hooks, "success", f"已登录：{account}")
 
         await _log(hooks, "info",
@@ -171,6 +190,7 @@ async def send_messages(
                    f"随机尾部 {'开(' + cfg.random_tail.style + ')' if cfg.random_tail.enabled else '关'}")
 
         for i, username in enumerate(targets, 1):
+            await _activity(hooks, "处理目标用户", current_target=username, waiting=False)
             # 停止检查
             if await _stopped(hooks):
                 await _log(hooks, "warn", f"收到停止信号，跳过剩余 {len(targets) - i + 1} 个目标，安全退出")
@@ -178,9 +198,11 @@ async def send_messages(
 
             # 暂停检查（阻塞等待恢复）
             while await _paused(hooks):
+                await _activity(hooks, "任务暂停中", current_target=username, waiting=True)
                 if await _stopped(hooks):
                     break
                 await asyncio.sleep(1)
+            await _activity(hooks, "任务运行中", current_target=username, waiting=False)
             if await _stopped(hooks):
                 break
 
@@ -202,35 +224,59 @@ async def send_messages(
                 result.sent += 1
                 if stats_ref is not None:
                     stats_ref.sent = result.sent
+                    stats_ref.touch(action=f"预览 {username}", current_target=username, waiting=False)
                 if hooks and hooks.get("on_progress"):
                     await hooks["on_progress"]()
                 continue
 
             try:
-                await client.send_message(username, final_text)
+                await _activity(hooks, "发送消息中", current_target=username, waiting=False)
+                await asyncio.wait_for(client.send_message(username, final_text), timeout=SEND_TIMEOUT)
                 result.sent += 1
                 if stats_ref is not None:
                     stats_ref.sent = result.sent
+                    stats_ref.touch(action=f"发送成功 {username}", current_target=username, waiting=False)
                 await _log(hooks, "success", f"{tag} [成功] -> {username}")
                 if hooks and hooks.get("on_progress"):
                     await hooks["on_progress"]()
 
+            except asyncio.TimeoutError:
+                result.failed += 1
+                if stats_ref is not None:
+                    stats_ref.failed = result.failed
+                    stats_ref.touch(action=f"发送超时 {username}", current_target=username, waiting=False)
+                await _log(hooks, "fail", f"{tag} [发送超时] -> {username}")
+
             except FloodWaitError as e:
                 wait_sec = e.seconds + random.randint(5, 15)
+                await _activity(hooks, "Telegram 限流等待中", current_target=username, waiting=True)
                 await _log(hooks, "warn", f"{tag} [限流] 稍后自动重试 -> {username}")
                 # 分段等待以便响应停止
-                for _ in range(0, wait_sec, 5):
+                elapsed = 0
+                while elapsed < wait_sec:
                     if await _stopped(hooks):
                         break
-                    await asyncio.sleep(min(5, wait_sec))
+                    await _activity(hooks, "Telegram 限流等待中", current_target=username, waiting=True)
+                    step = min(FLOOD_WAIT_STEP, wait_sec - elapsed)
+                    await asyncio.sleep(step)
+                    elapsed += step
                 if await _stopped(hooks):
+                    await _activity(hooks, "任务已停止", current_target=username, waiting=False)
                     break
                 try:
-                    await client.send_message(username, final_text)
+                    await _activity(hooks, "限流后重试发送", current_target=username, waiting=False)
+                    await asyncio.wait_for(client.send_message(username, final_text), timeout=SEND_TIMEOUT)
                     result.sent += 1
                     if stats_ref is not None:
                         stats_ref.sent = result.sent
+                        stats_ref.touch(action=f"重试成功 {username}", current_target=username, waiting=False)
                     await _log(hooks, "success", f"{tag} [重试成功] -> {username}")
+                except asyncio.TimeoutError:
+                    result.failed += 1
+                    if stats_ref is not None:
+                        stats_ref.failed = result.failed
+                        stats_ref.touch(action=f"重试发送超时 {username}", current_target=username, waiting=False)
+                    await _log(hooks, "fail", f"{tag} [重试超时] -> {username}")
                 except Exception as e2:
                     if remove_target(str(cfg.usernames_path), username):
                         result.removed += 1

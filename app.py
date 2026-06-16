@@ -28,7 +28,7 @@ else:
     CONFIG_PATH = BASE_DIR / "config.yaml"
     STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="tg-mass-dm WebUI", version="4.0-web")
+app = FastAPI(title="tg-mass-dm WebUI", version="4.1-web")
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -398,7 +398,7 @@ async def get_status():
     return {
         "task": manager.stats.to_dict(),
         "config_ok": cfg is not None,
-        "version": "4.0-web",
+        "version": "4.1-web",
     }
 
 
