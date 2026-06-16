@@ -132,10 +132,13 @@ async def send_messages(
     if proxy_params:
         await _log(hooks, "info", f"使用代理：{cfg.proxy.get('type','socks5')}://{cfg.proxy.get('host')}:{cfg.proxy.get('port')}")
 
+    client_kwargs = {"proxy": proxy_params}
+    if conn_type is not None:
+        client_kwargs["connection"] = conn_type
+
     client = TelegramClient(
         str(cfg.session_path), cfg.api_id, cfg.api_hash,
-        proxy=proxy_params,
-        connection=conn_type,
+        **client_kwargs,
     )
     result = SendResult()
 
