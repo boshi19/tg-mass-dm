@@ -5,10 +5,36 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
+def _copy_runtime_files(current_dir: Path, dist_dir: Path) -> None:
+    """复制 exe 运行必需的配置、名单、文案和 session 文件到 dist 同级目录。"""
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ["config.yaml", "usernames.txt", "messages.txt"]:
+        src = current_dir / filename
+        if src.exists():
+            shutil.copy2(src, dist_dir / filename)
+            print(f"[复制] {filename} -> dist/{filename}")
+        else:
+            print(f"[警告] 未找到 {filename}，dist 中不会包含该文件。")
+
+    sessions_src = current_dir / "sessions"
+    sessions_dst = dist_dir / "sessions"
+    if sessions_src.exists():
+        if sessions_dst.exists():
+            shutil.rmtree(sessions_dst)
+        ignore = shutil.ignore_patterns("*.session-journal", "*.session-wal", "*.session-shm")
+        shutil.copytree(sessions_src, sessions_dst, ignore=ignore)
+        print("[复制] sessions/ -> dist/sessions/")
+    else:
+        sessions_dst.mkdir(parents=True, exist_ok=True)
+        print("[警告] 未找到 sessions/，已在 dist 中创建空 sessions/ 目录。")
+
+
 def build_project():
     current_dir = Path(__file__).resolve().parent
     main_py = current_dir / "main.py"
     static_dir = current_dir / "static"
+    dist_dir = current_dir / "dist"
     
     if not main_py.exists():
         print(f"[错误] 未能找到启动入口 main.py，请确保 build.py 放在项目根目录。")
@@ -31,7 +57,7 @@ def build_project():
         "--onefile",
         f"--name=tg-mass-dm",
         f"--workpath={str(current_dir / 'build')}",
-        f"--distpath={str(current_dir / 'dist')}",
+        f"--distpath={str(dist_dir)}",
         f"--specpath={str(current_dir)}",
     ]
 
@@ -74,10 +100,10 @@ def build_project():
     print(f"[执行] 打包命令生成中，开始调用 PyInstaller 构建进程...")
     try:
         subprocess.check_call(cmd)
+        _copy_runtime_files(current_dir, dist_dir)
         print("\n=======================================================")
         print(" 打包完成！最终打包文件生成在: dist/tg-mass-dm.exe")
-        print(" 运行提示：请将 config.yaml、usernames.txt、messages.txt")
-        print("    以及 sessions 文件夹放置在与该 .exe 同级目录下即可正常运行。")
+        print(" 配置文件、目标名单、文案池和 sessions 已同步到 dist/。")
         print("=======================================================")
     except subprocess.CalledProcessError as e:
         print(f"\n[错误] 打包失败，PyInstaller 进程返回异常: {e}")
