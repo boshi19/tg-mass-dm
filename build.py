@@ -48,6 +48,14 @@ def build_project():
 
     # 5. 显式追加 FastAPI, Uvicorn 以及 Telethon 核心依赖隐藏导入
     hidden_imports = [
+        "app",  # main.py 中 uvicorn.run("app:app") 为字符串引用，需手动隐藏导入
+        "config",
+        "messages",
+        "targets",
+        "event_bus",
+        "scheduler",
+        "sender",
+        "task_manager",
         "uvicorn.protocols.http.auto",
         "uvicorn.protocols.http.h11_impl",
         "uvicorn.protocols.websockets.auto",

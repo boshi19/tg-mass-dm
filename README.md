@@ -41,7 +41,7 @@ pip install -r requirements.txt
 ```yaml
 api_id: 你的API_ID
 api_hash: "你的API_HASH"
-session_file: "../sessions/你的session文件名"
+session_file: "sessions/你的session文件名"
 ```
 
 ### 4. 准备文件

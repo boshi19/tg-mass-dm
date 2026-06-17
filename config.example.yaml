@@ -2,7 +2,7 @@
 
 api_id: 123456
 api_hash: "replace_with_your_api_hash"
-session_file: ../sessions/example_session
+session_file: sessions/example_session
 usernames_file: usernames.txt
 messages_file: messages.txt
 

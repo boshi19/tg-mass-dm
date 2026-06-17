@@ -632,7 +632,42 @@ async function addSession() {
     }
     try {
         const data = await api('POST', '/api/sessions/login', { phone: phoneInput });
-        alert(data.message || "登录流已成功初始化！请立刻前往你的 Python 后端 CMD 终端黑窗口，根据提示输入 Telegram 官方下发的验证码进行接码登录。");
+        if (data.step === 'complete') {
+            toast(data.message || '登录成功');
+            loadSessions();
+            return;
+        }
+
+        if (data.step !== 'code' || !data.login_id) {
+            alert(data.message || '登录初始化失败');
+            return;
+        }
+
+        const code = prompt(data.message || '请输入 Telegram 收到的验证码');
+        if (!code) {
+            toast('已取消验证码输入', true);
+            return;
+        }
+
+        const codeResult = await api('POST', '/api/sessions/login/code', {
+            login_id: data.login_id,
+            code: code
+        });
+
+        if (codeResult.step === 'password') {
+            const password = prompt(codeResult.message || '请输入 Telegram 二步验证密码');
+            if (!password) {
+                toast('已取消二步验证输入', true);
+                return;
+            }
+            const passwordResult = await api('POST', '/api/sessions/login/password', {
+                login_id: data.login_id,
+                password: password
+            });
+            toast(passwordResult.message || '登录成功');
+        } else {
+            toast(codeResult.message || '登录成功');
+        }
         loadSessions();
     } catch (error) {}
 }

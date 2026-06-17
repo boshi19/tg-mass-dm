@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,15 @@ from config import AppConfig, load_config, save_config
 from sender import send_messages
 from task_manager import manager
 from event_bus import bus
+from telethon import TelegramClient, connection
+from telethon.errors import (
+    FloodWaitError,
+    PasswordHashInvalidError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
+)
 
 if getattr(sys, 'frozen', False):
     # 打包运行：配置文件在 exe 同级目录，静态网页在 PyInstaller 临时解压目录
@@ -74,6 +84,19 @@ class SessionLoginRequest(BaseModel):
     phone: str             # 手机号（国际格式，如 +8613800138000）
 
 
+class SessionCodeRequest(BaseModel):
+    login_id: str
+    code: str
+
+
+class SessionPasswordRequest(BaseModel):
+    login_id: str
+    password: str
+
+
+PENDING_LOGINS: dict[str, dict] = {}
+
+
 # ═══════════════════════════════════════════
 #  辅助函数
 # ═══════════════════════════════════════════
@@ -102,13 +125,11 @@ def _list_sessions(cfg: AppConfig) -> list[dict]:
     """
     列出 sessions 目录下的 .session 文件。
 
-    sessions 目录定位：跟随当前 session_file 的父目录；若不存在则回退到上级 sessions/。
-    rel_path 用 os.path.relpath 计算，正确处理上级目录（如 ../sessions/xxx）场景，
-    该值可直接写回 config.yaml 的 session_file 字段。
+    sessions 目录固定为程序目录下的 sessions/，避免在 exe 同级目录之外创建凭证。
+    rel_path 可直接写回 config.yaml 的 session_file 字段。
     """
     import os
-    sess_path = cfg.session_path.parent
-    sessions_dir = sess_path if sess_path.exists() else (BASE_DIR.parent / "sessions")
+    sessions_dir = BASE_DIR / "sessions"
     current_name = Path(cfg.session_file).name
     result = []
     if sessions_dir.exists():
@@ -125,9 +146,8 @@ def _list_sessions(cfg: AppConfig) -> list[dict]:
 
 
 def _get_sessions_dir(cfg: AppConfig) -> Path:
-    """获取 sessions 目录路径，不存在则创建。"""
-    sess_path = cfg.session_path.parent
-    sessions_dir = sess_path if sess_path.exists() else (BASE_DIR.parent / "sessions")
+    """获取程序目录下的 sessions 目录路径，不存在则创建。"""
+    sessions_dir = BASE_DIR / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     return sessions_dir
 
@@ -136,10 +156,65 @@ def _session_rel(stem: str) -> str:
     """session 文件名（不含 .session）转相对 BASE_DIR 路径。"""
     import os
     # 查找实际文件位置
-    for candidate in [BASE_DIR.parent / "sessions" / f"{stem}.session", BASE_DIR / f"{stem}.session"]:
+    for candidate in [BASE_DIR / "sessions" / f"{stem}.session", BASE_DIR / f"{stem}.session"]:
         if candidate.exists():
             return os.path.relpath(str(candidate.with_suffix("")), str(BASE_DIR)).replace("\\", "/")
-    return f"../sessions/{stem}"
+    return f"sessions/{stem}"
+
+
+def _session_rel_from_path(session_base: Path) -> str:
+    """把不含 .session 后缀的绝对 session 路径转成配置相对路径。"""
+    import os
+    return os.path.relpath(str(session_base), str(BASE_DIR)).replace("\\", "/")
+
+
+async def _build_login_client(cfg: AppConfig, session_base: Path) -> TelegramClient:
+    """创建登录专用 TelegramClient，沿用配置里的代理。"""
+    proxy_params = None
+    conn_type = None
+    if cfg.proxy:
+        import socks
+        ptype = (cfg.proxy.get("type") or "socks5").lower()
+        type_map = {"socks5": socks.SOCKS5, "socks4": socks.SOCKS4, "http": socks.HTTP}
+        proxy_params = (
+            type_map.get(ptype, socks.SOCKS5),
+            cfg.proxy.get("host", "127.0.0.1"),
+            int(cfg.proxy.get("port", 1080)),
+            True,
+            cfg.proxy.get("username") or None,
+            cfg.proxy.get("password") or None,
+        )
+        if ptype == "http":
+            conn_type = connection.ConnectionTcpMTProxyRandomizedIntermediate
+
+    kwargs = {"proxy": proxy_params}
+    if conn_type is not None:
+        kwargs["connection"] = conn_type
+    client = TelegramClient(str(session_base), cfg.api_id, cfg.api_hash, **kwargs)
+    await client.connect()
+    return client
+
+
+async def _close_pending_login(login_id: str) -> None:
+    pending = PENDING_LOGINS.pop(login_id, None)
+    if not pending:
+        return
+    client = pending.get("client")
+    if client:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+def _activate_session(session_base: Path) -> str:
+    cfg = load_config(str(CONFIG_PATH))
+    rel = _session_rel_from_path(session_base)
+    cfg.session_file = rel
+    cfg.config_dir = BASE_DIR
+    cfg.__post_init__()
+    save_config(str(CONFIG_PATH), cfg)
+    return rel
 
 
 # ═══════════════════════════════════════════
@@ -332,25 +407,104 @@ async def set_active_session(body: dict):
 @app.post("/api/sessions/login")
 async def session_login(body: SessionLoginRequest):
     """
-    前端触发手机号登录
+    发起 Telegram 登录：连接客户端并向手机号发送验证码。
     """
-    # 动态获取当前配置以拿取 API_ID 和 API_HASH
     try:
         cfg = load_config(str(CONFIG_PATH))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"加载配置失败: {str(e)}")
 
     sessions_dir = _get_sessions_dir(cfg)
-    # 规避特殊字符，将手机号转化为标准合规文件名
-    safe_phone = body.phone.replace("+", "").replace(" ", "")
-    target_session_path = sessions_dir / f"{safe_phone}.session"
+    phone = body.phone.strip()
+    safe_phone = phone.replace("+", "").replace(" ", "").replace("-", "")
+    if not phone.startswith("+") or not safe_phone.isdigit():
+        raise HTTPException(status_code=400, detail="请输入国际格式手机号，例如 +8613800000000")
 
-    # 在后台异步触发 Telethon 登录发码状态机（日志会推送到终端或事件总线）
-    await bus.publish("info", f"开始为手机号 {body.phone} 发起 Telegram 登录流...", "status")
-    
-    # 注意：此处触发接码逻辑。标准非阻塞接入通常通过外部任务或异步打印提示用户在 CMD 输入验证码
-    # 这里我们返回路径和状态，通知前端第一步已就绪
-    return {"ok": True, "message": "登录初始化成功，请前往后台控制台输入验证码完成接码认证。", "session_name": safe_phone}
+    session_base = sessions_dir / safe_phone
+    client = None
+    try:
+        client = await _build_login_client(cfg, session_base)
+        if await client.is_user_authorized():
+            await client.disconnect()
+            rel = _activate_session(session_base)
+            await bus.publish("success", f"账号 {phone} 已经授权，已切换为活动 Session", "status")
+            return {"ok": True, "step": "complete", "session_file": rel, "message": "该账号已经登录，已切换为活动 Session。"}
+
+        sent = await client.send_code_request(phone)
+        login_id = uuid.uuid4().hex
+        PENDING_LOGINS[login_id] = {
+            "client": client,
+            "phone": phone,
+            "session_base": session_base,
+            "phone_code_hash": sent.phone_code_hash,
+        }
+        await bus.publish("info", f"验证码已发送到 {phone}，请在网页弹窗输入验证码", "status")
+        return {"ok": True, "step": "code", "login_id": login_id, "message": "验证码已发送，请输入 Telegram 收到的验证码。"}
+    except PhoneNumberInvalidError:
+        if client:
+            await client.disconnect()
+        raise HTTPException(status_code=400, detail="手机号格式无效，请使用国际格式，例如 +8613800000000")
+    except FloodWaitError as e:
+        if client:
+            await client.disconnect()
+        raise HTTPException(status_code=429, detail=f"请求验证码过于频繁，请等待 {e.seconds} 秒后再试")
+    except Exception as e:
+        if client:
+            await client.disconnect()
+        raise HTTPException(status_code=500, detail=f"发起登录失败: {str(e)}")
+
+
+@app.post("/api/sessions/login/code")
+async def session_login_code(body: SessionCodeRequest):
+    """提交 Telegram 验证码，完成登录或进入二步密码环节。"""
+    pending = PENDING_LOGINS.get(body.login_id)
+    if not pending:
+        raise HTTPException(status_code=400, detail="登录会话已失效，请重新发送验证码")
+
+    client: TelegramClient = pending["client"]
+    code = body.code.strip().replace(" ", "")
+    try:
+        await client.sign_in(
+            phone=pending["phone"],
+            code=code,
+            phone_code_hash=pending["phone_code_hash"],
+        )
+        await _close_pending_login(body.login_id)
+        rel = _activate_session(pending["session_base"])
+        await bus.publish("success", f"账号 {pending['phone']} 登录成功，已切换为活动 Session", "status")
+        return {"ok": True, "step": "complete", "session_file": rel, "message": "登录成功，已切换为活动 Session。"}
+    except SessionPasswordNeededError:
+        await bus.publish("info", f"账号 {pending['phone']} 需要二步验证密码", "status")
+        return {"ok": True, "step": "password", "message": "该账号开启了二步验证，请输入 Telegram 云密码。"}
+    except PhoneCodeInvalidError:
+        raise HTTPException(status_code=400, detail="验证码不正确，请重新输入")
+    except PhoneCodeExpiredError:
+        await _close_pending_login(body.login_id)
+        raise HTTPException(status_code=400, detail="验证码已过期，请重新发送验证码")
+    except Exception as e:
+        await _close_pending_login(body.login_id)
+        raise HTTPException(status_code=500, detail=f"验证码登录失败: {str(e)}")
+
+
+@app.post("/api/sessions/login/password")
+async def session_login_password(body: SessionPasswordRequest):
+    """提交二步验证密码完成登录。"""
+    pending = PENDING_LOGINS.get(body.login_id)
+    if not pending:
+        raise HTTPException(status_code=400, detail="登录会话已失效，请重新发送验证码")
+
+    client: TelegramClient = pending["client"]
+    try:
+        await client.sign_in(password=body.password)
+        await _close_pending_login(body.login_id)
+        rel = _activate_session(pending["session_base"])
+        await bus.publish("success", f"账号 {pending['phone']} 二步验证通过，已切换为活动 Session", "status")
+        return {"ok": True, "step": "complete", "session_file": rel, "message": "登录成功，已切换为活动 Session。"}
+    except PasswordHashInvalidError:
+        raise HTTPException(status_code=400, detail="二步验证密码不正确，请重新输入")
+    except Exception as e:
+        await _close_pending_login(body.login_id)
+        raise HTTPException(status_code=500, detail=f"二步验证失败: {str(e)}")
 
 
 @app.delete("/api/sessions")
