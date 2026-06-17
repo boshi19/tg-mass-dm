@@ -72,9 +72,10 @@ class EventBus:
             if q in self._subscribers:
                 self._subscribers.remove(q)
 
-    def clear_history(self) -> None:
+    async def clear_history(self) -> None:
         """清空历史缓冲（新一轮任务开始时调用）。"""
-        self._history.clear()
+        async with self._lock:
+            self._history.clear()
 
 
 # 全局单例

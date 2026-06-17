@@ -1,11 +1,22 @@
 ﻿# task_manager.py - 任务状态管理单例：控制启停/暂停、维护实时统计
 
 import asyncio
+import inspect
+import io
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+import sys
+import traceback
 
 from event_bus import bus
+
+
+WATCHDOG_INTERVAL = 5
+WATCHDOG_STALE_SECONDS = 60
+BASE_DIR = Path(__file__).resolve().parent
+REPORTS_DIR = BASE_DIR / "reports"
 
 
 class TaskState(str, Enum):
@@ -92,6 +103,7 @@ class TaskManager:
         self.pause_event = asyncio.Event()      # set() 表示请求暂停
         self.stop_event = asyncio.Event()       # set() 表示请求停止
         self._task: asyncio.Task | None = None  # 当前运行的发送协程
+        self._watchdog_task: asyncio.Task | None = None
 
     # ── 状态查询 ──────────────────────────────
     def is_running(self) -> bool:
@@ -142,8 +154,9 @@ class TaskManager:
         self.stats = TaskStats(state=TaskState.RUNNING, started_at=now, last_heartbeat=now, last_action="任务启动")
         self.pause_event.clear()
         self.stop_event.clear()
-        bus.clear_history()
+        await bus.clear_history()
         self._task = asyncio.create_task(self._run(coro))
+        self._watchdog_task = asyncio.create_task(self._watchdog())
         await bus.publish("info", "任务已启动", "status")
         return True
 
@@ -165,8 +178,66 @@ class TaskManager:
                 self.stats.state = TaskState.FINISHED
             self.stats.touch(action="任务结束", waiting=False)
             self._task = None
+            if self._watchdog_task and self._watchdog_task is not asyncio.current_task():
+                self._watchdog_task.cancel()
+            self._watchdog_task = None
             await bus.publish("info", f"任务结束，状态：{self.stats.state.value}", "status")
             await bus.publish("info", self._progress_text(), "summary")
+
+    async def _watchdog(self) -> None:
+        """监控任务心跳，长时间无响应时写入栈快照，便于定位假死。"""
+        reported = False
+        try:
+            while self.is_running():
+                await asyncio.sleep(WATCHDOG_INTERVAL)
+                if not self.is_running() or self.stats.last_heartbeat <= 0:
+                    continue
+                stale_for = time.time() - self.stats.last_heartbeat
+                if stale_for < WATCHDOG_STALE_SECONDS:
+                    reported = False
+                    continue
+                if reported:
+                    continue
+                path = self.dump_diagnostics(reason=f"heartbeat stale for {stale_for:.1f}s")
+                self.stats.last_error = f"任务心跳超过 {WATCHDOG_STALE_SECONDS} 秒未更新，已写入诊断栈：{path}"
+                await bus.publish("warn", self.stats.last_error, "status")
+                reported = True
+        except asyncio.CancelledError:
+            return
+
+    def dump_diagnostics(self, reason: str = "manual") -> str:
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = REPORTS_DIR / "thread_stack.txt"
+        buf = io.StringIO()
+        buf.write(f"Reason: {reason}\n")
+        buf.write(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        buf.write(f"Task state: {self.stats.to_dict()}\n\n")
+
+        buf.write("=== Python Threads ===\n")
+        frames = sys._current_frames()
+        for thread_id, frame in frames.items():
+            buf.write(f"\n--- Thread {thread_id} ---\n")
+            buf.write("".join(traceback.format_stack(frame)))
+
+        buf.write("\n=== Asyncio Tasks ===\n")
+        try:
+            tasks = asyncio.all_tasks()
+        except RuntimeError:
+            tasks = set()
+        for task in tasks:
+            buf.write(f"\n--- Task {task.get_name()} state={task._state} ---\n")
+            stack = task.get_stack()
+            if not stack:
+                coro = task.get_coro()
+                buf.write(f"No stack. Coroutine: {coro!r}\n")
+                if inspect.iscoroutine(coro) and coro.cr_frame:
+                    buf.write("".join(traceback.format_stack(coro.cr_frame)))
+                continue
+            for frame in stack:
+                buf.write("".join(traceback.format_stack(frame)))
+
+        path.write_text(buf.getvalue(), encoding="utf-8")
+        return str(path)
 
     async def pause(self) -> bool:
         if self.stats.state != TaskState.RUNNING:

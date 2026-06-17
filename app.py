@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -95,6 +96,10 @@ class SessionPasswordRequest(BaseModel):
 
 
 PENDING_LOGINS: dict[str, dict] = {}
+LOGIN_CONNECT_TIMEOUT = 45
+LOGIN_RPC_TIMEOUT = 45
+LOGIN_DISCONNECT_TIMEOUT = 10
+PENDING_LOGIN_TTL = 10 * 60
 
 
 # ═══════════════════════════════════════════
@@ -191,7 +196,7 @@ async def _build_login_client(cfg: AppConfig, session_base: Path) -> TelegramCli
     if conn_type is not None:
         kwargs["connection"] = conn_type
     client = TelegramClient(str(session_base), cfg.api_id, cfg.api_hash, **kwargs)
-    await client.connect()
+    await asyncio.wait_for(client.connect(), timeout=LOGIN_CONNECT_TIMEOUT)
     return client
 
 
@@ -201,10 +206,26 @@ async def _close_pending_login(login_id: str) -> None:
         return
     client = pending.get("client")
     if client:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
+        await _safe_disconnect_login_client(client)
+
+
+async def _safe_disconnect_login_client(client: TelegramClient) -> None:
+    try:
+        await asyncio.wait_for(client.disconnect(), timeout=LOGIN_DISCONNECT_TIMEOUT)
+    except Exception:
+        pass
+
+
+async def _cleanup_pending_logins() -> None:
+    """关闭过期的验证码登录会话，避免长期持有 Telethon client。"""
+    now = time.time()
+    expired = [
+        login_id
+        for login_id, pending in PENDING_LOGINS.items()
+        if now - pending.get("created_at", now) > PENDING_LOGIN_TTL
+    ]
+    for login_id in expired:
+        await _close_pending_login(login_id)
 
 
 def _activate_session(session_base: Path) -> str:
@@ -409,6 +430,8 @@ async def session_login(body: SessionLoginRequest):
     """
     发起 Telegram 登录：连接客户端并向手机号发送验证码。
     """
+    await _cleanup_pending_logins()
+
     try:
         cfg = load_config(str(CONFIG_PATH))
     except Exception as e:
@@ -424,39 +447,45 @@ async def session_login(body: SessionLoginRequest):
     client = None
     try:
         client = await _build_login_client(cfg, session_base)
-        if await client.is_user_authorized():
-            await client.disconnect()
+        if await asyncio.wait_for(client.is_user_authorized(), timeout=LOGIN_RPC_TIMEOUT):
+            await _safe_disconnect_login_client(client)
             rel = _activate_session(session_base)
             await bus.publish("success", f"账号 {phone} 已经授权，已切换为活动 Session", "status")
             return {"ok": True, "step": "complete", "session_file": rel, "message": "该账号已经登录，已切换为活动 Session。"}
 
-        sent = await client.send_code_request(phone)
+        sent = await asyncio.wait_for(client.send_code_request(phone), timeout=LOGIN_RPC_TIMEOUT)
         login_id = uuid.uuid4().hex
         PENDING_LOGINS[login_id] = {
             "client": client,
             "phone": phone,
             "session_base": session_base,
             "phone_code_hash": sent.phone_code_hash,
+            "created_at": time.time(),
         }
         await bus.publish("info", f"验证码已发送到 {phone}，请在网页弹窗输入验证码", "status")
         return {"ok": True, "step": "code", "login_id": login_id, "message": "验证码已发送，请输入 Telegram 收到的验证码。"}
     except PhoneNumberInvalidError:
         if client:
-            await client.disconnect()
+            await _safe_disconnect_login_client(client)
         raise HTTPException(status_code=400, detail="手机号格式无效，请使用国际格式，例如 +8613800000000")
     except FloodWaitError as e:
         if client:
-            await client.disconnect()
+            await _safe_disconnect_login_client(client)
         raise HTTPException(status_code=429, detail=f"请求验证码过于频繁，请等待 {e.seconds} 秒后再试")
+    except asyncio.TimeoutError:
+        if client:
+            await _safe_disconnect_login_client(client)
+        raise HTTPException(status_code=504, detail="Telegram 登录请求超时，请检查网络或代理后重试")
     except Exception as e:
         if client:
-            await client.disconnect()
+            await _safe_disconnect_login_client(client)
         raise HTTPException(status_code=500, detail=f"发起登录失败: {str(e)}")
 
 
 @app.post("/api/sessions/login/code")
 async def session_login_code(body: SessionCodeRequest):
     """提交 Telegram 验证码，完成登录或进入二步密码环节。"""
+    await _cleanup_pending_logins()
     pending = PENDING_LOGINS.get(body.login_id)
     if not pending:
         raise HTTPException(status_code=400, detail="登录会话已失效，请重新发送验证码")
@@ -464,10 +493,13 @@ async def session_login_code(body: SessionCodeRequest):
     client: TelegramClient = pending["client"]
     code = body.code.strip().replace(" ", "")
     try:
-        await client.sign_in(
-            phone=pending["phone"],
-            code=code,
-            phone_code_hash=pending["phone_code_hash"],
+        await asyncio.wait_for(
+            client.sign_in(
+                phone=pending["phone"],
+                code=code,
+                phone_code_hash=pending["phone_code_hash"],
+            ),
+            timeout=LOGIN_RPC_TIMEOUT,
         )
         await _close_pending_login(body.login_id)
         rel = _activate_session(pending["session_base"])
@@ -481,6 +513,9 @@ async def session_login_code(body: SessionCodeRequest):
     except PhoneCodeExpiredError:
         await _close_pending_login(body.login_id)
         raise HTTPException(status_code=400, detail="验证码已过期，请重新发送验证码")
+    except asyncio.TimeoutError:
+        await _close_pending_login(body.login_id)
+        raise HTTPException(status_code=504, detail="验证码登录请求超时，请检查网络或代理后重试")
     except Exception as e:
         await _close_pending_login(body.login_id)
         raise HTTPException(status_code=500, detail=f"验证码登录失败: {str(e)}")
@@ -489,19 +524,23 @@ async def session_login_code(body: SessionCodeRequest):
 @app.post("/api/sessions/login/password")
 async def session_login_password(body: SessionPasswordRequest):
     """提交二步验证密码完成登录。"""
+    await _cleanup_pending_logins()
     pending = PENDING_LOGINS.get(body.login_id)
     if not pending:
         raise HTTPException(status_code=400, detail="登录会话已失效，请重新发送验证码")
 
     client: TelegramClient = pending["client"]
     try:
-        await client.sign_in(password=body.password)
+        await asyncio.wait_for(client.sign_in(password=body.password), timeout=LOGIN_RPC_TIMEOUT)
         await _close_pending_login(body.login_id)
         rel = _activate_session(pending["session_base"])
         await bus.publish("success", f"账号 {pending['phone']} 二步验证通过，已切换为活动 Session", "status")
         return {"ok": True, "step": "complete", "session_file": rel, "message": "登录成功，已切换为活动 Session。"}
     except PasswordHashInvalidError:
         raise HTTPException(status_code=400, detail="二步验证密码不正确，请重新输入")
+    except asyncio.TimeoutError:
+        await _close_pending_login(body.login_id)
+        raise HTTPException(status_code=504, detail="二步验证请求超时，请检查网络或代理后重试")
     except Exception as e:
         await _close_pending_login(body.login_id)
         raise HTTPException(status_code=500, detail=f"二步验证失败: {str(e)}")

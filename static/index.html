@@ -436,6 +436,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let sse = null;
+let sseReconnectTimer = null;
 const TASK_RUNNING = new Set(['running','paused','stopping']);
 
 /* ── 标签页无缝切换逻辑 ── */
@@ -497,7 +498,14 @@ async function pollStatus(){
 setInterval(pollStatus, 1500);
 
 function connectSSE(){
-  if(sse) sse.close();
+  if(sseReconnectTimer){
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+  }
+  if(sse){
+    sse.close();
+    sse = null;
+  }
   sse = new EventSource('/api/logs/stream');
   sse.onopen = ()=>{ $('sseBadge').textContent='SSE 已连接'; $('sseBadge').style.background='#13231b'; $('sseBadge').style.color='#56d364'; };
   sse.onmessage = (e)=>{
@@ -507,7 +515,18 @@ function connectSSE(){
       if(ev.category==='summary' || ev.category==='status') pollStatus();
     }catch(err){}
   };
-  sse.onerror = ()=>{ $('sseBadge').textContent='SSE 重连中…'; $('sseBadge').style.background='#2d1818'; $('sseBadge').style.color='#f85149'; setTimeout(connectSSE, 3000); };
+  sse.onerror = ()=>{
+    $('sseBadge').textContent='SSE 重连中…';
+    $('sseBadge').style.background='#2d1818';
+    $('sseBadge').style.color='#f85149';
+    if(sse){
+      sse.close();
+      sse = null;
+    }
+    if(!sseReconnectTimer){
+      sseReconnectTimer = setTimeout(connectSSE, 3000);
+    }
+  };
 }
 
 function appendLog(ev){

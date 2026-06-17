@@ -2,6 +2,7 @@
 # WebUI 版：通过 hooks 回调上报事件，支持暂停/停止，与 task_manager 协作。
 
 import asyncio
+import inspect
 import random
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
@@ -52,7 +53,9 @@ async def safe_disconnect(client: TelegramClient) -> None:
         except Exception:
             pass
         try:
-            client.session.close()
+            result = client.session.close()
+            if inspect.isawaitable(result):
+                await asyncio.wait_for(result, timeout=5)
         except Exception:
             pass
 

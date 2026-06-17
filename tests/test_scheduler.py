@@ -17,15 +17,12 @@ class TestRandomSleep:
             # 带 jitter 范围 [0.85, 3.45]
             assert 0.5 <= actual_wait <= 5.0
 
-    def test_long_sleep_prints_countdown(self):
+    def test_long_sleep_is_chunked_without_countdown_logs(self):
         delay = DelayConfig(min=130.0, max=130.0)
         with patch("scheduler.time.sleep", side_effect=lambda s: None):
             with patch("builtins.print") as mock_print:
                 random_sleep(delay)
-                # 应打印倒计时
-                countdown_calls = [c for c in mock_print.call_args_list 
-                                   if isinstance(c[0][0], str) and "等待" in c[0][0]]
-                assert len(countdown_calls) >= 2
+                assert mock_print.call_count == 0
 
     def test_short_sleep_no_countdown(self):
         delay = DelayConfig(min=3.0, max=3.0)

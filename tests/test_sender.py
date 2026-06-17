@@ -60,8 +60,27 @@ class TestSafeDisconnect:
         client = AsyncMock()
         client.disconnect.side_effect = TypeError("mock error")
         client._disconnect = AsyncMock()
+        client.session.close = MagicMock(return_value=None)
         await safe_disconnect(client)
         client._disconnect.assert_called_once()
+        client.session.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_safe_disconnect_awaits_async_session_close(self):
+        """session.close 若返回 awaitable，也应被正确等待。"""
+        closed = {"value": False}
+
+        async def close_session():
+            closed["value"] = True
+
+        client = AsyncMock()
+        client.disconnect.side_effect = TypeError("mock error")
+        client._disconnect = AsyncMock()
+        client.session.close = MagicMock(return_value=close_session())
+
+        await safe_disconnect(client)
+
+        assert closed["value"] is True
 
 
 class TestSendMessages:
@@ -108,7 +127,7 @@ class TestSendMessages:
             mock_client.send_message = AsyncMock()
             mock_client_cls.return_value = mock_client
 
-            with patch("sender.random_sleep", return_value=None):
+            with patch("sender.async_sleep", AsyncMock(return_value=True)):
                 result = await send_messages(cfg, dry_run=False)
 
             # 只发了一条（daily_limit=1），两个目标只发了1个
@@ -130,7 +149,7 @@ class TestSendMessages:
             mock_client.send_message = AsyncMock(side_effect=PeerFloodError)
             mock_client_cls.return_value = mock_client
 
-            with patch("sender.random_sleep", return_value=None):
+            with patch("sender.async_sleep", AsyncMock(return_value=True)):
                 result = await send_messages(cfg, dry_run=False)
 
             assert result.sent == 0
@@ -160,7 +179,7 @@ class TestSendMessages:
             mock_client.send_message = AsyncMock(side_effect=mock_send)
             mock_client_cls.return_value = mock_client
 
-            with patch("sender.random_sleep", return_value=None):
+            with patch("sender.async_sleep", AsyncMock(return_value=True)):
                 with patch("asyncio.sleep", AsyncMock()):
                     result = await send_messages(cfg, dry_run=False)
 
