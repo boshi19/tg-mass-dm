@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from config import ScheduleConfig, DelayConfig
-from scheduler import wait_until_scheduled, random_sleep
+from scheduler import wait_until_scheduled, random_sleep, weighted_delay_seconds
 
 
 class TestRandomSleep:
@@ -32,6 +32,12 @@ class TestRandomSleep:
                 countdown_calls = [c for c in mock_print.call_args_list 
                                    if isinstance(c[0][0], str) and "剩余等待" in c[0][0]]
                 assert len(countdown_calls) == 0
+
+    def test_weighted_delay_stays_in_reasonable_range(self):
+        delay = DelayConfig(min=10.0, max=20.0)
+        values = [weighted_delay_seconds(delay) for _ in range(100)]
+        assert min(values) >= 1.0
+        assert max(values) <= 22.0
 
 
 class TestWaitUntilScheduled:

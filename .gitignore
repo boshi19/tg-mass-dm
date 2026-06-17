@@ -30,3 +30,5 @@ crash.log
 *.log
 _*.txt
 reports/
+*.sqlite3
+*.db

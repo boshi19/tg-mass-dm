@@ -9,6 +9,23 @@ from zoneinfo import ZoneInfo
 from config import ScheduleConfig, DelayConfig
 
 
+def weighted_delay_seconds(delay: DelayConfig | None) -> float:
+    """在配置范围内生成偏短等待、偶尔长等待的加权延时。"""
+    d_min = delay.min if delay else 8.0
+    d_max = delay.max if delay else 25.0
+    if d_max < d_min:
+        d_min, d_max = d_max, d_min
+    if d_max <= d_min:
+        return max(1.0, float(d_min))
+    if random.random() < 0.8:
+        ratio = random.betavariate(2, 5)
+    else:
+        ratio = random.betavariate(3, 2)
+    wait = d_min + (d_max - d_min) * ratio
+    jitter = wait * random.uniform(-0.1, 0.1)
+    return max(1.0, wait + jitter)
+
+
 def wait_until_scheduled(schedule: ScheduleConfig) -> None:
     """
     如果配置了定时，在指定时间前阻塞等待。
@@ -53,11 +70,7 @@ def random_sleep(delay: DelayConfig) -> None:
     参数:
         delay: DelayConfig
     """
-    d_min = delay.min if delay else 8.0
-    d_max = delay.max if delay else 25.0
-    wait = random.uniform(d_min, d_max)
-    jitter = wait * random.uniform(-0.15, 0.15)
-    actual = max(1.0, wait + jitter)
+    actual = weighted_delay_seconds(delay)
 
     if actual > 120:
         total = int(actual)
@@ -84,11 +97,7 @@ async def async_sleep(delay: DelayConfig, hooks: dict | None = None) -> bool:
     返回:
         bool - True=正常等完，False=被请求停止
     """
-    d_min = delay.min if delay else 8.0
-    d_max = delay.max if delay else 25.0
-    wait = random.uniform(d_min, d_max)
-    jitter = wait * random.uniform(-0.15, 0.15)
-    actual = max(1.0, wait + jitter)
+    actual = weighted_delay_seconds(delay)
 
     should_stop = hooks.get("should_stop") if hooks else None
     on_activity = hooks.get("on_activity") if hooks else None

@@ -112,6 +112,7 @@ class TestSendMessages:
             # dry_run 下不应调用 send_message
             mock_client.send_message.assert_not_called()
             assert result.sent > 0
+            assert (tmp_path / "reports" / "dry_run_preview.md").exists()
 
     @pytest.mark.asyncio
     async def test_daily_limit_stops(self, tmp_path):

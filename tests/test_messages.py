@@ -1,6 +1,12 @@
 """test_messages.py - 文案池和随机尾部模块的 pytest 测试"""
 import pytest
-from messages import load_messages, append_random_tail
+from messages import (
+    append_random_tail,
+    compose_message,
+    detect_risky_terms,
+    load_messages,
+    render_template,
+)
 
 
 class TestLoadMessages:
@@ -62,3 +68,23 @@ class TestAppendRandomTail:
         result = append_random_tail("Hello")
         assert "." in result or result == "Hello"
         assert result != "Hello"
+
+
+class TestTemplateAndRisk:
+    def test_render_template_known_placeholders(self):
+        result = render_template("hi {username} from {account}", {"username": "alice", "account": "me"})
+        assert result == "hi alice from me"
+
+    def test_render_template_keeps_unknown_placeholders(self):
+        result = render_template("hi {unknown}", {"username": "alice"})
+        assert result == "hi {unknown}"
+
+    def test_compose_message_can_disable_variation_and_tail(self):
+        result = compose_message("hi {username}", {"username": "alice"}, tail_enabled=False, variation_enabled=False)
+        assert result == "hi alice"
+
+    def test_detect_risky_terms(self):
+        result = detect_risky_terms("点击链接 https://example.com 加微信")
+        assert "点击链接" in result
+        assert "https://" in result
+        assert "加微信" in result
