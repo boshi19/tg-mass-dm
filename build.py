@@ -51,6 +51,7 @@ def build_project():
         "app",  # main.py 中 uvicorn.run("app:app") 为字符串引用，需手动隐藏导入
         "config",
         "messages",
+        "history",
         "targets",
         "event_bus",
         "scheduler",
@@ -74,8 +75,8 @@ def build_project():
     try:
         subprocess.check_call(cmd)
         print("\n=======================================================")
-        print(" 🎉 打包完成！最终打包文件生成在: dist/tg-mass-dm.exe")
-        print(" 💡 运行提示：请将 config.yaml、usernames.txt、messages.txt")
+        print(" 打包完成！最终打包文件生成在: dist/tg-mass-dm.exe")
+        print(" 运行提示：请将 config.yaml、usernames.txt、messages.txt")
         print("    以及 sessions 文件夹放置在与该 .exe 同级目录下即可正常运行。")
         print("=======================================================")
     except subprocess.CalledProcessError as e:
